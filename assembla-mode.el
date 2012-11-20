@@ -1,6 +1,15 @@
 (require 'assembla-lib)
 (require 'json)
 
+(defvar assembla-cache-patterns
+  '(("^spaces"           . 86400) ; spaces rarely change, cache for a day
+    ("spaces.*ticket"    . 3600) ; tickets change sometimes, cache for an hour
+    ("*ticket_comments*" . 0)) ; comments frequently change, never cache
+  "Stores the set of URI patterns and their corresponding cache
+   expiration values. Setting a cache value to < 1, will cause it
+   to never be cached. In the case of multiple patterns matching
+   a URI, the smaller value will always be chosen.")
+
 (defvar assembla-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "f") 'assembla-goto-thing-at-point)
@@ -34,13 +43,6 @@
     (use-local-map assembla-mode-map)
     (assembla-get "spaces" "json" 'render-assembla-spaces t 86400)))
 
-(defun assembla-prep-buffer(&optional heading-str)
-  (toggle-read-only -1)
-  (erase-buffer)
-  (when heading-str
-    (insert (format "%s" heading-str))
-    (newline)))
-
 ;; doesn't support multiple args to funcall
 (defun assembla-prev-buffer()
   "Calls whatever function exists in `prev-buffer' text-property at
@@ -71,19 +73,6 @@
 		   (space-id (cdr (assoc 'space_id ticket)))
 		   (ticket-id (cdr (assoc 'id ticket))))
 	      (assembla-render-ticket space-id ticket-id)))))))
-
-(defun render-activity-stream(json-str)
-  (with-current-buffer (get-buffer-create "assembla")
-    (let* ((events (json-read-from-string json-str))
-	   (len    (length events)))
-      (dotimes (n len)
-	(let* ((event (elt events n))
-	       (operation (cdr (assoc 'operation event)))
-	       (name (cdr (assoc 'author_name event)))
-	       (space-name (cdr (assoc 'space_name event)))
-	       (title (cdr (assoc 'title event))))
-	  (insert (format "%s @ %s %s %s" name space-name operation title))
-	  (newline))))))
 
 (defun render-assembla-spaces(response)
   (let* ((spaces (json-read-from-string response))
@@ -151,6 +140,7 @@
   (let* ((ticket (json-read-from-string json-str))
 	 (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
     (insert (format "%s" desc))
+    (newline)
     (insert (format "---------------------------------"))
     (newline)
     (assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
@@ -171,7 +161,3 @@
     (insert (format "%s" (cdr (assoc 'comment comment))))
     (newline)
     (insert "-----------------------------\n")))
-
- ;     (render-assembla-ticket-comments ticket))))
-
-;(defun render-assembla-ticket-comments
