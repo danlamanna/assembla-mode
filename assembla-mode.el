@@ -3,8 +3,8 @@
 
 (defvar assembla-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") 'assembla-render-stream)
-    (define-key map (kbd "B") 'assembla-prev-buffer)
+    (define-key map (kbd "f") 'assembla-goto-thing-at-point)
+    (define-key map (kbd "d") 'assembla-prev-buffer)
       map))
 
 (defmacro with-assembla-buffer(asm-buffer-name heading-str &rest body)
@@ -14,18 +14,17 @@
   (declare (indent 2))
   `(with-current-buffer (get-buffer-create ,asm-buffer-name)
      (assembla-mode)
-     (toggle-read-only -1)
      (erase-buffer)
      (insert (format "-- %s ---------------" ,heading-str))
      (newline)
      (progn ,@body)
-     (toggle-read-only 1)
      (goto-char (point-min))
      (switch-to-buffer ,asm-buffer-name)))
 
 (define-derived-mode assembla-mode fundamental-mode "Assembla"
   "A major mode for interacting with Assembla."
   (kill-all-local-variables)
+  (use-local-map assembla-mode-map)
   (setq major-mode 'assembla-mode)
   (setq mode-name "Assembla"))
 
@@ -42,11 +41,36 @@
     (insert (format "%s" heading-str))
     (newline)))
 
+;; doesn't support multiple args to funcall
 (defun assembla-prev-buffer()
+  "Calls whatever function exists in `prev-buffer' text-property at
+   `point-min' of current buffer.
+
+   Currently works up to one argument if given a list."
   (interactive)
   (let ((prev-buffer-action (get-text-property (point-min) 'prev-buffer)))
+    (message (format "%s" prev-buffer-action))
     (when prev-buffer-action
-      (funcall prev-buffer-action))))
+      (if (listp prev-buffer-action)
+	  (funcall (car prev-buffer-action) (car (cdr prev-buffer-action)))
+	(funcall prev-buffer-action)))))
+
+(defun assembla-goto-thing-at-point()
+  "This calls an action to the `assembla-thing-at-point'.
+
+   space:  `assembla-render-tickets-in-space'
+   ticket: `assembla-render-ticket'"
+  (interactive)
+  (let ((assembla-thing-at-point (get-text-property (point) 'assembla-thing-at-point)))
+    (when assembla-thing-at-point
+      (if (string-equal assembla-thing-at-point "space")
+	  (let ((space (get-text-property (point) 'space-meta)))
+	    (assembla-render-tickets-in-space (cdr (assoc 'id space))))
+	(if (string-equal assembla-thing-at-point "ticket")
+	    (let* ((ticket (get-text-property (point) 'ticket-meta))
+		   (space-id (cdr (assoc 'space_id ticket)))
+		   (ticket-id (cdr (assoc 'id ticket))))
+	      (assembla-render-ticket space-id ticket-id)))))))
 
 (defun render-activity-stream(json-str)
   (with-current-buffer (get-buffer-create "assembla")
@@ -73,8 +97,10 @@
 	 (str-length  (length name)))
     (insert (format "%s" name))
     (put-text-property start-point (+ start-point str-length) 'space-meta space)
+    (put-text-property start-point (+ start-point str-length) 'assembla-thing-at-point "space")
     (newline)))
 
+;;refactor
 (defun assembla-render-tickets-in-space(&optional space-id)
   (interactive)
   (if (not space-id) ;; assume space at point
@@ -94,42 +120,47 @@
     (dotimes (n len)
       (render-assembla-ticket-line (elt tickets n)))))
 
+;; excerpt summary length @todo
 (defun render-assembla-ticket-line(ticket)
   (let* ((summary (cdr (assoc 'summary ticket)))
 	 (start-point (point))
 	 (str-length (length summary)))
    (insert (format "#%-3d %-10s %s" (cdr (assoc 'number ticket)) (format "[%s]" (cdr (assoc 'status ticket))) summary))
     (put-text-property start-point (+ start-point str-length) 'ticket-meta ticket)
+    (put-text-property start-point (+ start-point str-length) 'assembla-thing-at-point "ticket")
     (newline)))
 
-(defun assembla-render-ticket-at-point()
+;;refactor
+(defun assembla-render-ticket(&optional space-id &optional ticket-id)
   (interactive)
-  (let* ((ticket (get-text-property (point) 'ticket-meta)))
-    (if (not ticket)
-	(message "No ticket at point.")
-      (with-assembla-buffer "*assembla*" "single ticket"
-	(let ((summary (cdr (assoc 'summary ticket)))
-	      (id      (cdr (assoc 'id ticket)))
-	      (space-id (cdr (assoc 'space_id ticket))))
-	  (assembla-get (format "spaces/%s/tickets/id/%s" space-id id) "json" 'render-assembla-ticket-view t))))))
+  (if (and (not space-id)
+	   (not ticket-id))
+      ;; use point
+      (let* ((ticket    (get-text-property (point) 'ticket-meta))
+	     (space-id  (cdr (assoc 'space_id ticket)))
+	     (ticket-id (cdr (assoc 'id ticket))))
+	(with-assembla-buffer "*assembla*" (format "Ticket %d" (cdr (assoc 'number ticket)))
+	  (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t)
+	  (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,space-id))))
+    ;; use space-id/ticket-id
+    (with-assembla-buffer "*assembla*" "Ticket"
+      (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t)
+      (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,space-id)))))
 
 (defun render-assembla-ticket-view(json-str)
-  (with-current-buffer (get-buffer-create "assembla-ticket-view")
-    (let* ((ticket (json-read-from-string json-str))
-	   (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
-      (insert (format "%s" desc))
-      (insert (format "---------------------------------"))
-      (newline)
-      (assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
-      (newline))))
-
+  (let* ((ticket (json-read-from-string json-str))
+	 (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
+    (insert (format "%s" desc))
+    (insert (format "---------------------------------"))
+    (newline)
+    (assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
+    (newline)))
 
 (defun render-assembla-ticket-comments(json-str)
-  (with-current-buffer (get-buffer-create "assembla-ticket-view")
-    (let* ((comments (json-read-from-string json-str))
-	   (len    (length comments)))
-      (dotimes (n len)
-	(render-assembla-comment (elt comments n))))))
+  (let* ((comments (json-read-from-string json-str))
+	 (len    (length comments)))
+    (dotimes (n len)
+      (render-assembla-comment (elt comments n)))))
 
 (defun render-assembla-comment(comment)
   (unless (or (eq (cdr (assoc 'comment comment)) "")
