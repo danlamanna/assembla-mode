@@ -173,7 +173,7 @@
 	(insert (format "Priority:    %s" (asm/ticket-priority-label (cdr (assoc 'priority ticket)))))
 	(newline)
 	(insert (format "Assigned To: %s\n" (asm/get-user (cdr (assoc 'assigned_to_id ticket)) 'name)))
-	(insert (format "Due Date:    %s" (cdr (assoc 'Due-Date (cdr (assoc 'custom_fields ticket))))))
+	(insert (format "Due Date:    %s" (or (cdr (assoc 'Due-Date (cdr (assoc 'custom_fields ticket)))) "-")))
 	(newline)(newline)
 	(insert (format "%s" desc))
 	(newline)
@@ -211,6 +211,39 @@
 			     (3 . "Normal")
 			     (4 . "Low")
 			     (5 . "Lowest")))))
+
+(defvar asm/comment-buffer-name "*assembla-comment*"
+  "Buffer name for composing comments.")
+
+(defvar asm/comment-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") 'asm/comment-submit) map))
+
+(define-derived-mode asm/comment-mode text-mode "Assembla Comment Mode"
+  (use-local-map asm/comment-mode-map))
+
+(defun asm/popup-comment()
+  "Creates a buffer named `asm/comment-buffer-name' and pops to it.
+   No buffer will be created if the current *assembla* buffer doesn't
+   have `ticket-meta'."
+  (interactive)
+  (let ((ticket (get-text-property (point-min) 'ticket-meta)))
+    (when ticket
+      (let ((buf (get-buffer-create asm/comment-buffer-name)))
+	(pop-to-buffer buf)
+	(asm/comment-mode)))))
+
+(defun asm/comment-submit()
+  "POSTs a comment to the ticket in *assembla* buffer."
+  (interactive)
+  (let* ((ticket    (get-text-property (point-min) 'ticket-meta (get-buffer "*assembla*")))
+	 (space-id  (cdr (assoc 'space_id ticket)))
+	 (number    (cdr (assoc 'number ticket)))
+	 (comment   (buffer-string))
+	 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment))))))
+	 (uri       (format "spaces/%s/tickets/%d/ticket_comments" space-id number)))
+    (assembla-post-or-put uri "json" post-list "POST" (lambda(response)
+							(kill-buffer (get-buffer asm/comment-buffer-name))))))
 
 (assembla-get "spaces" "json" 'asm/build-user-table t 86400)))
 
