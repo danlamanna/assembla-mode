@@ -46,16 +46,17 @@
 ;; doesn't support multiple args to funcall
 (defun assembla-prev-buffer()
   "Calls whatever function exists in `prev-buffer' text-property at
-   `point-min' of current buffer.
+   `point-min' of current buffer. Defaults to `assembla'.
 
    Currently works up to one argument if given a list."
   (interactive)
   (let ((prev-buffer-action (get-text-property (point-min) 'prev-buffer)))
     (message (format "%s" prev-buffer-action))
-    (when prev-buffer-action
-      (if (listp prev-buffer-action)
-	  (funcall (car prev-buffer-action) (car (cdr prev-buffer-action)))
-	(funcall prev-buffer-action)))))
+    (if prev-buffer-action
+	(if (listp prev-buffer-action)
+	    (funcall (car prev-buffer-action) (car (cdr prev-buffer-action)))
+	  (funcall prev-buffer-action))
+      (assembla))))
 
 (defun assembla-goto-thing-at-point()
   "This calls an action to the `assembla-thing-at-point'.
@@ -96,18 +97,18 @@
       (let ((space (get-text-property (point) 'space-meta)))
 	(if (not space)
 	    (message "No space at point.")
-	  (with-assembla-buffer "*assembla*" "Tickets in Space"
+	  (with-assembla-buffer "*assembla*" (format "Tickets in %s" (cdr (assoc 'name space)))
 	    (assembla-get (format "spaces/%s/tickets" (cdr (assoc 'id space))) "json" 'render-assembla-tickets-list t)
 	    (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))))
-    (with-assembla-buffer "*assembla*" "Tickets in Space" ;; use space-id
-      (assembla-get (format "spaces/%s/tickets" space-id) "json" 'render-assembla-tickets-list t)
-      (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))))
+    (assembla-get (format "spaces/%s/tickets" space-id) "json" 'render-assembla-tickets-list t)))
 
 (defun render-assembla-tickets-list(json-str)
-  (let* ((tickets (json-read-from-string json-str))
-	 (len    (length tickets)))
-    (dotimes (n len)
-      (render-assembla-ticket-line (elt tickets n)))))
+  (with-assembla-buffer "*assembla*" "Tickets in SPACE"
+    (let* ((tickets (json-read-from-string json-str))
+	   (len    (length tickets)))
+      (dotimes (n len)
+	(render-assembla-ticket-line (elt tickets n)))))
+  (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))
 
 ;; excerpt summary length @todo
 (defun render-assembla-ticket-line(ticket)
@@ -128,23 +129,24 @@
       (let* ((ticket    (get-text-property (point) 'ticket-meta))
 	     (space-id  (cdr (assoc 'space_id ticket)))
 	     (ticket-id (cdr (assoc 'id ticket))))
-	(with-assembla-buffer "*assembla*" (format "Ticket %d" (cdr (assoc 'number ticket)))
+	(with-assembla-buffer "*assembla*" (format "[%d] %s" (cdr (assoc 'number ticket)) (cdr (assoc 'name ticket)))
 	  (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t)
 	  (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,space-id))))
     ;; use space-id/ticket-id
     (with-assembla-buffer "*assembla*" "Ticket"
-      (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t)
-      (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,space-id)))))
+      (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t))))
 
 (defun render-assembla-ticket-view(json-str)
-  (let* ((ticket (json-read-from-string json-str))
-	 (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
-    (insert (format "%s" desc))
-    (newline)
-    (insert (format "---------------------------------"))
-    (newline)
-    (assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
-    (newline)))
+  (with-assembla-buffer "*assembla*" "Ticket"
+    (let* ((ticket (json-read-from-string json-str))
+	   (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
+      (insert (format "%s" desc))
+      (newline)
+      (insert (format "---------------------------------"))
+      (newline)
+      (assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
+      (newline)
+      (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
 
 (defun render-assembla-ticket-comments(json-str)
   (let* ((comments (json-read-from-string json-str))
