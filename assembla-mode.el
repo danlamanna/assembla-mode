@@ -131,6 +131,7 @@
 	     (ticket-id (cdr (assoc 'id ticket))))
 	(with-assembla-buffer "*assembla*" (format "[%d] %s" (cdr (assoc 'number ticket)) (cdr (assoc 'name ticket)))
 	  (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t)
+	  (put-text-property (point-min) (point-max) 'ticket-meta ticket)
 	  (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,space-id))))
     ;; use space-id/ticket-id
     (with-assembla-buffer "*assembla*" "Ticket"
@@ -140,12 +141,19 @@
   (with-assembla-buffer "*assembla*" "Ticket"
     (let* ((ticket (json-read-from-string json-str))
 	   (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
+      (insert (format "Status: %-10s\n" (cdr (assoc 'status ticket))))
+      (insert (format "Priority: %s" (cdr (assoc 'priority ticket))))
+      (newline)
+      (insert (format "Assigned To: %20s\n" (cdr (assoc 'assigned_to_id ticket))))
+      (insert (format "Due Date: Unknown"))
+      (newline)(newline)
       (insert (format "%s" desc))
       (newline)
       (insert (format "---------------------------------"))
       (newline)
       (assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
       (newline)
+      (put-text-property (point-min) (point-max) 'ticket-meta ticket)
       (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
 
 (defun render-assembla-ticket-comments(json-str)
