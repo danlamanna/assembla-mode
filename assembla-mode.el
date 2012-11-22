@@ -52,15 +52,15 @@
     "Set of URI patterns and their corresponding cache lifetime values.
      Setting a cache value to < 1, will cause it to never be cached.  In the case of
      multiple patterns matching a URI, the smaller value will always be chosen.
-     In the case a URI does not have a match, it defaults to `assembla-cache-duration-default'.
-     Note: This variable is completely ineffective if `assembla-cache-enabled' is `nil'."
+     In the case a URI does not have a match, it defaults to `asl/cache-duration-default'.
+     Note: This variable is completely ineffective if `asl/cache-enabled' is `nil'."
     :type  'alist
     :group 'assembla-mode)
 
 (defun asm/get-request-cache-duration(uri type)
   "Determines how long a request should be cached based on
    `asm/uri-cache-durations'.  If a matching cache pattern can't be
-   found, it defaults to `assembla-cache-duration-default'."
+   found, it defaults to `asl/cache-duration-default'."
   (setq cache-duration nil)
   (dolist (pattern asm/uri-cache-durations)
     (if (and (or (eq cache-duration nil)
@@ -68,12 +68,12 @@
 	     (string-match-p (car pattern) (format "%s.%s" uri type)))
 	(setq cache-duration (cdr pattern))))
   (or cache-duration
-      assembla-cache-duration-default))
+      asl/cache-duration-default))
 
 (defun asm/get(uri type callback)
-  "Shorthand for calling `assembla-get', while
+  "Shorthand for calling `asl/get', while
    using `asm/get-request-cache-duration' for the cache-duration."
-  (assembla-get uri type callback t (asm/get-request-cache-duration uri type)))
+  (asl/get uri type callback t (asm/get-request-cache-duration uri type)))
 
 ;; mode mappings/definitions/macros
 (defvar assembla-mode-map
@@ -113,7 +113,7 @@
 
 (defun asm/build-hash-tables(spaces-json)
   "Builds a global hash table of users in `asm/user-table', and spaces in
-   `asm/spaces-table' by going through all spaces, and calling `assembla-get'
+   `asm/spaces-table' by going through all spaces, and calling `asl/get'
    on /spaces/:space_id/users and adding each user to the table.
    Key is the ID, so users/spaces are only stored once."
   (let* ((spaces (json-read-from-string spaces-json))
@@ -322,8 +322,8 @@
 		 (comment   (buffer-string))
 		 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment))))))
 		 (uri       (format "spaces/%s/tickets/%d/ticket_comments" space-id number)))
-    (assembla-post-or-put uri "json" post-list "POST" (lambda(response)
-							(assembla-invalidate-uri-cache (format "spaces/%s/tickets/%d/ticket_comments" space-id number) "json")
+    (asl/post-or-put uri "json" post-list "POST" (lambda(response)
+							(asl/invalidate-uri-cache (format "spaces/%s/tickets/%d/ticket_comments" space-id number) "json")
 							(kill-buffer (get-buffer asm/comment-buffer-name))
 							(switch-to-buffer "*assembla*")
 							(asm/render-ticket space-id (cdr (assoc 'id ticket)))))))
