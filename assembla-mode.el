@@ -25,7 +25,7 @@
 
 ;;; Code:
 
-(add-to-list 'load-path "./assembla-lib")
+(add-to-list 'load-path "./lib")
 
 (require 'assembla-lib)
 (require 'json)
