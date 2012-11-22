@@ -1,3 +1,30 @@
+;;; assembla-mode.el --- A major mode allowing for interaction with Assembla.
+;; Copyright (C) 2012 Dan LaManna
+
+;; Author: Dan LaManna <dan.lamanna@gmail.com>
+;; Keywords: assembla mode api
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+;;; Commentary:
+;; A beta release of a work in progress, it allows interacting with Assembla,
+;; but unfortunately is mostly unusable without utilizing caching in large
+;; Assembla accounts. The defaults, with enabling cache are the most optimal
+;; for how I currently use Assembla.
+
+;;; Code:
+
 (add-to-list 'load-path "./assembla-lib")
 
 (require 'assembla-lib)
@@ -12,8 +39,7 @@
   :group  'tools)
 
 (defcustom asm/prev-buffer-default 'assembla
-  "Function called when `asm/prev-buffer' can't
-   find a function to call."
+  "Function called when `asm/prev-buffer' can't find a function to call."
   :group 'assembla-mode
   :type  'function)
 
@@ -24,7 +50,7 @@
       ("^spaces\/.+/tickets\/id\/.+\\.json$" . 86400) ; Individual Ticket
       ("^spaces\/.+\/tickets/\.+\/ticket_comments\\.json$" . 900)) ; Ticket Comments
     "Set of URI patterns and their corresponding cache lifetime values.
-     Setting a cache value to < 1, will cause it to never be cached. In the case of
+     Setting a cache value to < 1, will cause it to never be cached.  In the case of
      multiple patterns matching a URI, the smaller value will always be chosen.
      In the case a URI does not have a match, it defaults to `assembla-cache-duration-default'.
      Note: This variable is completely ineffective if `assembla-cache-enabled' is `nil'."
@@ -33,7 +59,7 @@
 
 (defun asm/get-request-cache-duration(uri type)
   "Determines how long a request should be cached based on
-   `asm/uri-cache-durations'. If a matching cache pattern can't be
+   `asm/uri-cache-durations'.  If a matching cache pattern can't be
    found, it defaults to `assembla-cache-duration-default'."
   (setq cache-duration nil)
   (dolist (pattern asm/uri-cache-durations)
@@ -124,7 +150,7 @@
 ;; doesn't support multiple args to funcall
 (defun asm/prev-buffer()
   "Calls whatever function exists in `prev-buffer' text-property at
-   `point-min' of current buffer. Defaults to `asm/prev-buffer-default'.
+   `point-min' of current buffer.  Defaults to `asm/prev-buffer-default'.
 
    Currently works up to one argument if given a list."
   (interactive)
@@ -305,3 +331,5 @@
 (asm/get "spaces" "json" 'asm/build-hash-tables)
 
 (provide 'assembla-mode)
+
+;;; assembla-mode.el ends here
