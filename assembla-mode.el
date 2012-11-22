@@ -6,21 +6,63 @@
 (setq asm/user-table   (make-hash-table :test 'equal))
 (setq asm/spaces-table (make-hash-table :test 'equal))
 
-(defvar assembla-cache-patterns
-  '(("^spaces"           . 86400) ; spaces rarely change, cache for a day
-    ("spaces.*ticket"    . 3600) ; tickets change sometimes, cache for an hour
-    ("*ticket_comments*" . 0)) ; comments frequently change, never cache
-  "Stores the set of URI patterns and their corresponding cache
-   expiration values. Setting a cache value to < 1, will cause it
-   to never be cached. In the case of multiple patterns matching
-   a URI, the smaller value will always be chosen.")
+(defgroup assembla-mode nil
+  "Interact with Assembla from Emacs."
+  :prefix "assembla-mode-"
+  :group  'tools)
 
+(defcustom asm/prev-buffer-default 'assembla
+  "Function called when `asm/prev-buffer' can't
+   find a function to call."
+  :group 'assembla-mode
+  :type  'function)
+
+(defcustom asm/uri-cache-durations
+    `(("^spaces\\.json$" . ,(* 86400 7)) ; List of spaces
+      ("^spaces\/.+\/users\\.json$" . ,(* 86400 7)) ; List of users in a space
+      ("^spaces\/.+\/tickets\\.json$" . 3600) ; List of tickets in a space
+      ("^spaces\/.+/tickets\/id\/.+\\.json$" . 86400) ; Individual Ticket
+      ("^spaces\/.+\/tickets/\.+\/ticket_comments\\.json$" . 900)) ; Ticket Comments
+    "Set of URI patterns and their corresponding cache lifetime values.
+     Setting a cache value to < 1, will cause it to never be cached. In the case of
+     multiple patterns matching a URI, the smaller value will always be chosen.
+     In the case a URI does not have a match, it defaults to `assembla-cache-duration-default'.
+     Note: This variable is completely ineffective if `assembla-cache-enabled' is `nil'."
+    :type  'alist
+    :group 'assembla-mode)
+
+(defun asm/get-request-cache-duration(uri type)
+  "Determines how long a request should be cached based on
+   `asm/uri-cache-durations'. If a matching cache pattern can't be
+   found, it defaults to `assembla-cache-duration-default'."
+  (setq cache-duration nil)
+  (dolist (pattern asm/uri-cache-durations)
+    (if (and (or (eq cache-duration nil)
+		 (< (cdr pattern) cache-duration))
+	     (string-match-p (car pattern) (format "%s.%s" uri type)))
+	(setq cache-duration (cdr pattern))))
+  (or cache-duration
+      assembla-cache-duration-default))
+
+(defun asm/get(uri type callback)
+  "Shorthand for calling `assembla-get', while
+   using `asm/get-request-cache-duration' for the cache-duration."
+  (assembla-get uri type callback t (asm/get-request-cache-duration uri type)))
+
+;; mode mappings/definitions/macros
 (defvar assembla-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "f") 'asm/goto-thing-at-point)
     (define-key map (kbd "d") 'asm/prev-buffer)
     (define-key map (kbd "C") 'asm/popup-comment)
       map))
+
+(define-derived-mode assembla-mode fundamental-mode "Assembla"
+  "A major mode for interacting with Assembla."
+  (kill-all-local-variables)
+  (use-local-map assembla-mode-map)
+  (setq major-mode 'assembla-mode)
+  (setq mode-name "Assembla"))
 
 (defmacro with-assembla-buffer(asm-buffer-name heading-str &rest body)
   "Create buffer with name of ASM-BUFFER-NAME, or uses it if exists,
@@ -36,18 +78,12 @@
      (goto-char (point-min))
      (switch-to-buffer ,asm-buffer-name)))
 
-(define-derived-mode assembla-mode fundamental-mode "Assembla"
-  "A major mode for interacting with Assembla."
-  (kill-all-local-variables)
-  (use-local-map assembla-mode-map)
-  (setq major-mode 'assembla-mode)
-  (setq mode-name "Assembla"))
-
+;; init/bootstrap
 (defun assembla()
   (interactive)
   (with-assembla-buffer "*assembla*" "Spaces List"
     (use-local-map assembla-mode-map)
-    (assembla-get "spaces" "json" 'render-assembla-spaces t 86400)))
+    (asm/get "spaces" "json" 'asm/render-spaces)))
 
 (defun asm/build-hash-tables(spaces-json)
   "Builds a global hash table of users in `asm/user-table', and spaces in
@@ -59,11 +95,11 @@
     (dotimes (n len)
       (lexical-let ((space-id (cdr (assoc 'id (elt spaces n)))))
 	(puthash space-id (elt spaces n) asm/spaces-table)
-	(assembla-get (format "spaces/%s/users" space-id) "json" (lambda(space-users-json)
-								   (lexical-let* ((space-users (json-read-from-string space-users-json))
-										  (su-len      (length space-users)))
-								     (dotimes (c su-len)
-								       (puthash (cdr (assoc 'id (elt space-users c))) (elt space-users c) asm/user-table)))) t 86400)))))
+	(asm/get (format "spaces/%s/users" space-id) "json" (lambda(space-users-json)
+							      (lexical-let* ((space-users (json-read-from-string space-users-json))
+									     (su-len      (length space-users)))
+								(dotimes (c su-len)
+								  (puthash (cdr (assoc 'id (elt space-users c))) (elt space-users c) asm/user-table)))))))))
 
 (defun asm/get-user(id &optional field)
   "Gets the assembla user with an id of ID from `asm/user-table'.
@@ -76,6 +112,9 @@
 	user))))
 
 (defun asm/get-space(id &optional field)
+  "Gets the assembla space with an id of ID from `asm/spaces-table'.
+   If FIELD is set, it will return that specific field from the hash-table.
+   In both cases, `nil' will be returned if the space of FIELD doesn't exist."
   (let ((space (gethash id asm/spaces-table)))
     (when space
       (if field
@@ -85,42 +124,41 @@
 ;; doesn't support multiple args to funcall
 (defun asm/prev-buffer()
   "Calls whatever function exists in `prev-buffer' text-property at
-   `point-min' of current buffer. Defaults to `assembla'.
+   `point-min' of current buffer. Defaults to `asm/prev-buffer-default'.
 
    Currently works up to one argument if given a list."
   (interactive)
   (let ((prev-buffer-action (get-text-property (point-min) 'prev-buffer)))
-    (message (format "%s" prev-buffer-action))
     (if prev-buffer-action
 	(if (listp prev-buffer-action)
 	    (funcall (car prev-buffer-action) (car (cdr prev-buffer-action)))
 	  (funcall prev-buffer-action))
-      (assembla))))
+      (funcall asm/prev-buffer-default))))
 
 (defun asm/goto-thing-at-point()
   "This calls an action to the `assembla-thing-at-point'.
 
-   space:  `assembla-render-tickets-in-space'
-   ticket: `assembla-render-ticket'"
+   space:  `asm/render-tickets-in-space'
+   ticket: `asm/render-ticket'"
   (interactive)
   (let ((assembla-thing-at-point (get-text-property (point) 'assembla-thing-at-point)))
     (when assembla-thing-at-point
       (if (string-equal assembla-thing-at-point "space")
 	  (let ((space (get-text-property (point) 'space-meta)))
-	    (assembla-render-tickets-in-space (cdr (assoc 'id space))))
+	    (asm/render-tickets-in-space (cdr (assoc 'id space))))
 	(if (string-equal assembla-thing-at-point "ticket")
 	    (let* ((ticket (get-text-property (point) 'ticket-meta))
 		   (space-id (cdr (assoc 'space_id ticket)))
 		   (ticket-id (cdr (assoc 'id ticket))))
-	      (assembla-render-ticket space-id ticket-id)))))))
+	      (asm/render-ticket space-id ticket-id)))))))
 
-(defun render-assembla-spaces(response)
+(defun asm/render-spaces(response)
   (let* ((spaces (json-read-from-string response))
 	 (len    (length spaces)))
     (dotimes (n len)
-      (render-assembla-space (elt spaces n)))))
+      (asm/render-space (elt spaces n)))))
 
-(defun render-assembla-space(space)
+(defun asm/render-space(space)
   (let* ((name        (cdr (assoc 'name space)))
 	 (start-point (point))
 	 (str-length  (length name)))
@@ -130,28 +168,28 @@
     (newline)))
 
 ;;refactor
-(defun assembla-render-tickets-in-space(&optional space-id)
+(defun asm/render-tickets-in-space(&optional space-id)
   (interactive)
   (if (not space-id) ;; assume space at point
       (let ((space (get-text-property (point) 'space-meta)))
 	(if (not space)
 	    (message "No space at point.")
 	  (with-assembla-buffer "*assembla*" (format "Tickets in %s" (cdr (assoc 'name space)))
-	    (assembla-get (format "spaces/%s/tickets" (cdr (assoc 'id space))) "json" 'render-assembla-tickets-list t)
+	    (asm/get (format "spaces/%s/tickets" (cdr (assoc 'id space))) "json" 'asm/render-tickets-list)
 	    (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))))
-    (assembla-get (format "spaces/%s/tickets" space-id) "json" 'render-assembla-tickets-list t)))
+    (asm/get (format "spaces/%s/tickets" space-id) "json" 'asm/render-tickets-list)))
 
-(defun render-assembla-tickets-list(json-str)
+(defun asm/render-tickets-list(json-str)
     (let* ((tickets  (json-read-from-string json-str))
 	   (len      (length tickets))
 	   (space-id (cdr (assoc 'space_id (cdr (elt tickets 0))))))
       (with-assembla-buffer "*assembla*" (format "-- %s (Tickets List)" (asm/get-space space-id 'name))
 	(dotimes (n len)
-	  (render-assembla-ticket-line (elt tickets n)))))
+	  (asm/render-ticket-line (elt tickets n)))))
     (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))
 
 ;; excerpt summary length @todo
-(defun render-assembla-ticket-line(ticket)
+(defun asm/render-ticket-line(ticket)
   (let* ((summary (cdr (assoc 'summary ticket)))
 	 (start-point (point))
 	 (str-length (length summary)))
@@ -161,7 +199,7 @@
     (newline)))
 
 ;;refactor
-(defun assembla-render-ticket(&optional space-id &optional ticket-id)
+(defun asm/render-ticket(&optional space-id &optional ticket-id)
   (interactive)
   (if (and (not space-id)
 	   (not ticket-id))
@@ -170,14 +208,14 @@
 	     (space-id  (cdr (assoc 'space_id ticket)))
 	     (ticket-id (cdr (assoc 'id ticket))))
 	(with-assembla-buffer "*assembla*" (format "[#%d] %s (Ticket View)" (cdr (assoc 'number ticket)) (cdr (assoc 'name ticket)))
-	  (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t)
+	  (asm/get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'asm/render-ticket-view)
 	  (put-text-property (point-min) (point-max) 'ticket-meta ticket)
-	  (put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,space-id))))
+	  (put-text-property (point-min) (point-max) 'prev-buffer `(asm/render-tickets-in-space ,space-id))))
     ;; use space-id/ticket-id
     (with-assembla-buffer "*assembla*" "Ticket"
-      (assembla-get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'render-assembla-ticket-view t))))
+      (asm/get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'asm/render-ticket-view))))
 
-(defun render-assembla-ticket-view(json-str)
+(defun asm/render-ticket-view(json-str)
   (let* ((ticket (json-read-from-string json-str))
 	 (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
       (with-assembla-buffer "*assembla*" (format "[#%d] %s (Ticket View)" (cdr (assoc 'number ticket)) (cdr (assoc 'summary ticket)))
@@ -191,12 +229,12 @@
 	(newline)
 	(insert (format "---------------------------------"))
 	(newline)
-	(assembla-get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'render-assembla-ticket-comments t 1800)
+	(asm/get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'asm/render-ticket-comments)
 	(newline)
 	(put-text-property (point-min) (point-max) 'ticket-meta ticket)
-	(put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
+	(put-text-property (point-min) (point-max) 'prev-buffer `(asm/render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
 
-(defun render-assembla-ticket-comments(json-str)
+(defun asm/render-ticket-comments(json-str)
   "@todo: comments come in ordered by created_at desc, the opposite
    of how they're displayed on their site, and how we want to display them.
    So we loop through and select the comment indices in reverse, we should
@@ -209,9 +247,9 @@
     (let* ((comments (json-read-from-string json-str))
 	   (len    (length comments)))
       (dotimes (n len)
-	(render-assembla-comment (elt comments (- (length comments) (+ n 1))))))))
+	(asm/render-comment (elt comments (- len (+ n 1))))))))
 
-(defun render-assembla-comment(comment)
+(defun asm/render-comment(comment)
   (unless (or (eq (cdr (assoc 'comment comment)) "")
 	      (eq (cdr (assoc 'comment comment)) nil))
     (insert (format "%s" (asm/get-user (cdr (assoc 'user_id comment)) 'name)))
@@ -262,8 +300,8 @@
 							(assembla-invalidate-uri-cache (format "spaces/%s/tickets/%d/ticket_comments" space-id number) "json")
 							(kill-buffer (get-buffer asm/comment-buffer-name))
 							(switch-to-buffer "*assembla*")
-							(assembla-render-ticket space-id (cdr (assoc 'id ticket)))))))
+							(asm/render-ticket space-id (cdr (assoc 'id ticket)))))))
 
-(assembla-get "spaces" "json" 'asm/build-hash-tables t 86400)
+(asm/get "spaces" "json" 'asm/build-hash-tables)
 
 (provide 'assembla-mode)
