@@ -17,7 +17,7 @@
 
 (defvar assembla-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "f") 'assembla-goto-thing-at-point)
+    (define-key map (kbd "f") 'asm/goto-thing-at-point)
     (define-key map (kbd "d") 'asm/prev-buffer)
     (define-key map (kbd "C") 'asm/popup-comment)
       map))
@@ -26,7 +26,8 @@
   "Create buffer with name of ASM-BUFFER-NAME, or uses it if exists,
    preps it with readonly/erase/heading - executes `body' - then puts
    readonly back on, goes to beginning of buffer, and switches to it."
-  (declare (indent 2))
+  (declare (indent 2)
+	   (debug t))
   `(with-current-buffer (get-buffer-create ,asm-buffer-name)
      (assembla-mode)
      (erase-buffer)
@@ -96,7 +97,7 @@
 	  (funcall prev-buffer-action))
       (assembla))))
 
-(defun assembla-goto-thing-at-point()
+(defun asm/goto-thing-at-point()
   "This calls an action to the `assembla-thing-at-point'.
 
    space:  `assembla-render-tickets-in-space'
@@ -196,6 +197,10 @@
 	(put-text-property (point-min) (point-max) 'prev-buffer `(assembla-render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
 
 (defun render-assembla-ticket-comments(json-str)
+  "@todo: comments come in ordered by created_at desc, the opposite
+   of how they're displayed on their site, and how we want to display them.
+   So we loop through and select the comment indices in reverse, we should
+   probably just have the sequence reversed."
   (with-current-buffer "*assembla*"
     (goto-char (point-max))
     (insert "%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COMMENTS ")
@@ -204,7 +209,7 @@
     (let* ((comments (json-read-from-string json-str))
 	   (len    (length comments)))
       (dotimes (n len)
-	(render-assembla-comment (elt comments n))))))
+	(render-assembla-comment (elt comments (- (length comments) (+ n 1))))))))
 
 (defun render-assembla-comment(comment)
   (unless (or (eq (cdr (assoc 'comment comment)) "")
