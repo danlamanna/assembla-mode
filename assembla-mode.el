@@ -81,6 +81,7 @@
     (define-key map (kbd "C-c f") 'asm/goto-thing-at-point)
     (define-key map (kbd "C-c d") 'asm/prev-buffer)
     (define-key map (kbd "C-c c") 'asm/popup-comment)
+    (define-key map (kbd "C-c F") 'asm/change-field-at-point)
       map))
 
 (define-derived-mode assembla-mode fundamental-mode "Assembla"
@@ -106,6 +107,9 @@
      (toggle-read-only 1)
      (switch-to-buffer ,asm-buffer-name)))
 
+(defun asm/val(field thing)
+  (cdr (assoc field thing)))
+
 ;; init/bootstrap
 (defun assembla()
   (interactive)
@@ -123,11 +127,13 @@
     (dotimes (n len)
       (lexical-let ((space-id (cdr (assoc 'id (elt spaces n)))))
 	(puthash space-id (elt spaces n) asm/spaces-table)
-	(asm/get (format "spaces/%s/users" space-id) "json" (lambda(space-users-json)
-							      (lexical-let* ((space-users (json-read-from-string space-users-json))
-									     (su-len      (length space-users)))
-								(dotimes (c su-len)
-								  (puthash (cdr (assoc 'id (elt space-users c))) (elt space-users c) asm/user-table)))))))))
+	(asm/get (format "spaces/%s/users" space-id) "json" 'asm/--build-hash-tables)))))
+
+(defun asm/--build-hash-tables(space-users-json)
+  (let* ((space-users (json-read-from-string space-users-json))
+	 (len         (length space-users)))
+    (dotimes (c len)
+      (puthash (cdr (assoc 'id (elt space-users c))) (elt space-users c) asm/user-table))))
 
 (defun asm/get-user(id &optional field)
   "Gets the assembla user with an id of ID from `asm/user-table'.
@@ -243,24 +249,49 @@
     (with-assembla-buffer "*assembla*" "Ticket"
       (asm/get (format "spaces/%s/tickets/id/%s" space-id ticket-id) "json" 'asm/render-ticket-view))))
 
+(defun asm/log(message)
+  (let ((buf (current-buffer)))
+    (save-excursion
+      (switch-to-buffer (get-buffer-create "*assembla-log*"))
+      (insert (format "%s" message))
+      (newline)
+      (insert "----------------------------------------------------")
+      (newline))
+    (switch-to-buffer buf)))
+
+
+(defun asm/ins-w-prop(text prop-name prop-val)
+  "Inserts TEXT and places a text-property of PROP-NAME with PROP-VAL
+   as it's value from the beginning to end of TEXT."
+  (let* ((init-point    (point))
+	 (end-point     (+ (length text) init-point)))
+    (insert text)
+    (put-text-property init-point end-point prop-name prop-val)))
+
+(defun asm/insert-nl(str)
+  (insert str)
+  (newline))
+
 (defun asm/render-ticket-view(json-str)
   (let* ((ticket (json-read-from-string json-str))
-	 (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket)))))
-      (with-assembla-buffer "*assembla*" (format "[#%d] %s (Ticket View)" (cdr (assoc 'number ticket)) (cdr (assoc 'summary ticket)))
-	(insert (format "Status:      %s\n" (cdr (assoc 'status ticket))))
-	(insert (format "Priority:    %s" (asm/ticket-priority-label (cdr (assoc 'priority ticket)))))
-	(newline)
-	(insert (format "Assigned To: %s\n" (asm/get-user (cdr (assoc 'assigned_to_id ticket)) 'name)))
-	(insert (format "Due Date:    %s" (or (cdr (assoc 'Due-Date (cdr (assoc 'custom_fields ticket)))) "-")))
-	(newline)(newline)
-	(insert (format "%s" desc))
-	(newline)
-	(insert (format "---------------------------------"))
-	(newline)
-	(asm/get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'asm/render-ticket-comments)
-	(newline)
-	(put-text-property (point-min) (point-max) 'ticket-meta ticket)
-	(put-text-property (point-min) (point-max) 'prev-buffer `(asm/render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
+	 (heading (format "[#%d] %s (Ticket View)" (asm/val 'number ticket) (asm/val 'summary ticket)))
+	 (desc   (if (eq "" (cdr (assoc 'description ticket))) "(no description)" (cdr (assoc 'description ticket))))
+	 (status-string (format "Status:      %s\n" (asm/val 'status ticket)))
+	 (priority-str  (format "Priority:    %s" (asm/ticket-priority-label (asm/val 'priority ticket))))
+	 (assigned-str  (format "Assigned To: %s\n" (asm/get-user (asm/val 'assigned_to_id ticket) 'name)))
+	 (due-date-str  (format "Due Date:    %s" (or (asm/val 'Due-Date (asm/val 'custom_fields ticket)) "-"))))
+    (with-assembla-buffer "*assembla*" heading
+      (asm/ins-w-prop status-string 'asm/field-at-point "status")
+      (asm/insert-nl priority-str)
+      (asm/ins-w-prop assigned-str 'asm/field-at-point "assigned-to")
+      (asm/insert-nl due-date-str)
+      (newline)
+      (asm/insert-nl (format "%s" desc))
+      (asm/insert-nl (format "---------------------------------"))
+      (asm/get (format "spaces/%s/tickets/%d/ticket_comments" (cdr (assoc 'space_id ticket)) (cdr (assoc 'number ticket))) "json" 'asm/render-ticket-comments)
+      (newline)
+      (put-text-property (point-min) (point-max) 'ticket-meta ticket)
+      (put-text-property (point-min) (point-max) 'prev-buffer `(asm/render-tickets-in-space ,(cdr (assoc 'space_id ticket)))))))
 
 (defun asm/render-ticket-comments(json-str)
   "@todo: comments come in ordered by created_at desc, the opposite
@@ -304,6 +335,42 @@
 (define-derived-mode asm/comment-mode text-mode "Assembla Comment Mode"
   (use-local-map asm/comment-mode-map))
 
+(defun asm/change-field-at-point()
+  "Finds the `asm/field-at-point' if there is one. If there is
+   it calls the appropriate function to change the field.
+
+   status:      `asm/ido-status'
+   assigned-to: `asm/ido-assign-to'."
+  (interactive)
+  (let ((field-at-point (get-text-property (point) 'asm/field-at-point)))
+    (when field-at-point
+      (if (string-equal field-at-point "status")
+	  (asm/ido-status)
+	(if (string-equal field-at-point "assigned-to")
+	    (asm/ido-assign-to))))))
+
+(defun asm/ido-status(&optional default)
+  (interactive)
+  (let ((statuses '("Test" "Fixed" "New" "Accepted" "Invalid")))
+    (ido-completing-read "Status: " statuses)))
+
+(defun asm/ido-assign-to()
+  "Presents an `ido' prompt with all users the ticket in *assembla* can
+   be assigned to. Defaults to whoever created the ticket."
+  (interactive)
+  (let* ((ticket      (get-text-property (point-min) 'ticket-meta (get-buffer "*assembla*")))
+	 (users-alist (gnus-hashtable-to-alist asm/user-table))
+	 (names-list  (mapcar 'asm/--name-from-user users-alist))
+	 (reporter-id (cdr (assoc 'reporter_id ticket)))
+	 (default-val (asm/get-user reporter-id 'name)))
+    (ido-completing-read "Assign To: " names-list nil nil nil nil default-val)))
+
+(defun asm/--name-from-user(user)
+  (cdr (assoc 'name user)))
+
+
+
+
 (defun asm/popup-comment()
   "Creates a buffer named `asm/comment-buffer-name' and pops to it.
    No buffer will be created if the current *assembla* buffer doesn't
@@ -322,8 +389,10 @@
 		 (space-id  (cdr (assoc 'space_id ticket)))
 		 (number    (cdr (assoc 'number ticket)))
 		 (comment   (buffer-string))
-		 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment))))))
+		 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment)
+								   (status  . ,(asm/ido-status)))))))
 		 (uri       (format "spaces/%s/tickets/%d/ticket_comments" space-id number)))
+    (insert post-list)
     (asl/post-or-put uri "json" post-list "POST" (lambda(response)
 							(asl/invalidate-uri-cache uri "json")
 							(kill-buffer (get-buffer asm/comment-buffer-name))
