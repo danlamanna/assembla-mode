@@ -78,9 +78,9 @@
 ;; mode mappings/definitions/macros
 (defvar assembla-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "f") 'asm/goto-thing-at-point)
-    (define-key map (kbd "d") 'asm/prev-buffer)
-    (define-key map (kbd "C") 'asm/popup-comment)
+    (define-key map (kbd "C-c f") 'asm/goto-thing-at-point)
+    (define-key map (kbd "C-c d") 'asm/prev-buffer)
+    (define-key map (kbd "C-c c") 'asm/popup-comment)
       map))
 
 (define-derived-mode assembla-mode fundamental-mode "Assembla"
@@ -97,11 +97,13 @@
   (declare (indent 2)
 	   (debug t))
   `(with-current-buffer (get-buffer-create ,asm-buffer-name)
+     (toggle-read-only -1)
      (assembla-mode)
      (erase-buffer)
      (setq header-line-format ,heading-str)
      (progn ,@body)
      (goto-char (point-min))
+     (toggle-read-only 1)
      (switch-to-buffer ,asm-buffer-name)))
 
 ;; init/bootstrap
@@ -323,7 +325,7 @@
 		 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment))))))
 		 (uri       (format "spaces/%s/tickets/%d/ticket_comments" space-id number)))
     (asl/post-or-put uri "json" post-list "POST" (lambda(response)
-							(asl/invalidate-uri-cache (format "spaces/%s/tickets/%d/ticket_comments" space-id number) "json")
+							(asl/invalidate-uri-cache uri "json")
 							(kill-buffer (get-buffer asm/comment-buffer-name))
 							(switch-to-buffer "*assembla*")
 							(asm/render-ticket space-id (cdr (assoc 'id ticket)))))))
