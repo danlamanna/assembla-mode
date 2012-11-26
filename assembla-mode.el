@@ -23,9 +23,18 @@
 ;; Assembla accounts. The defaults, with enabling cache are the most optimal
 ;; for how I currently use Assembla.
 
-;;; Code:
+;;; Todo:
+;;  Prefix all text-properties with asm/
+;;  Fixing text-properties that span across entire buffer instead of just point-min
+;;  Text Properties are a mess in terms of organization/consistency
+;;  Buffers/Windows are a mess, see with-assembla-buffer.
+;;  Related to ^ - Look into multiple buffers with tickets/spaces.
+;;  In order to correctly assign tickets, we need to maintain which users belong to
+;;    which spaces, meaning we should probably add a list to each user in
+;;    `asm/user-table' with their space ids from `asm/build-hash-tables'.
+;;  All around better error checking, the codebase constantly assumes values exist.
 
-(add-to-list 'load-path "./lib")
+;;; Code:
 
 (require 'assembla-lib)
 (require 'json)
@@ -79,6 +88,7 @@
 (defvar assembla-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c f") 'asm/goto-thing-at-point)
+    (define-key map (kbd "C-c i") 'asm/ido-switch-things)
     (define-key map (kbd "C-c d") 'asm/prev-buffer)
     (define-key map (kbd "C-c c") 'asm/popup-comment)
     (define-key map (kbd "C-c F") 'asm/change-field-at-point)
@@ -115,7 +125,8 @@
   (interactive)
   (with-assembla-buffer "*assembla*" "Spaces List"
     (use-local-map assembla-mode-map)
-    (asm/get "spaces" "json" 'asm/render-spaces)))
+    (asm/get "spaces" "json" 'asm/render-spaces)
+    (put-text-property (point-min) (+ (point-min) 1) 'things-in-buffer "spaces")))
 
 (defun asm/build-hash-tables(spaces-json)
   "Builds a global hash table of users in `asm/user-table', and spaces in
@@ -130,6 +141,8 @@
 	(asm/get (format "spaces/%s/users" space-id) "json" 'asm/--build-hash-tables)))))
 
 (defun asm/--build-hash-tables(space-users-json)
+  "Inner processing for `asm/build-hash-tables', takes the list of
+   users in a space and adds each user to `asm/user-table'."
   (let* ((space-users (json-read-from-string space-users-json))
 	 (len         (length space-users)))
     (dotimes (c len)
@@ -168,6 +181,63 @@
 	    (funcall (car prev-buffer-action) (car (cdr prev-buffer-action)))
 	  (funcall prev-buffer-action))
       (funcall asm/prev-buffer-default))))
+
+(defun asm/space-id-from-name(name)
+  (dolist (space (gnus-hashtable-to-alist asm/spaces-table))
+    (if (string-equal (asm/val 'name space) name)
+	(return (asm/val 'id space)))))
+
+(defun asm/--space-names-list()
+  (let ((space-names '()))
+	 (dolist (space (gnus-hashtable-to-alist asm/spaces-table))
+	   (add-to-list 'space-names (asm/val 'name space)))
+	 space-names))
+
+(defun asm/ido-switch-things()
+  "Switches 'things' using `ido-completing-read', each thing
+   is present in 'things-in-buffer text property.
+
+   spaces: `asm/render-tickets-in-space'
+   tickets: "
+  (interactive)
+  (let ((things (get-text-property (point-min) 'things-in-buffer)))
+    (when things
+      (cond
+       ((string-equal things "spaces")  (asm/--ido-switch-spaces-thing))
+       ((string-equal things "tickets") (asm/--ido-switch-tickets-thing))))))
+
+(defun asm/--ido-switch-spaces-thing()
+  "Handles when `things-in-buffer' are 'spaces'.
+   See: `asm/ido-switch-things'."
+  (let* ((space-name (ido-completing-read "Jump to Space: " (asm/--space-names-list)))
+	 (space-id   (asm/space-id-from-name space-name)))
+    (asm/render-tickets-in-space space-id)))
+
+(defun asm/--ido-switch-tickets-thing()
+  (let* ((space-id (get-text-property (point-min) 'space))
+	 (ticket-num-name (ido-completing-read "Jump to Ticket: " (asm/--ticket-num-names-list space-id)))
+	 (number (string-to-number (car (split-string ticket-num-name "/"))))
+	 (ticket-id (asm/ticket-id-from-number space-id number)))
+    (asm/render-ticket space-id ticket-id)))
+
+(defun asm/ticket-id-from-number(space-id number)
+  (setq ticket-id nil)
+  (asm/get (format "spaces/%s/tickets/%d" space-id number) "json" (lambda(response)
+								    (setq ticket-id (cdr (assoc 'id (json-read-from-string response))))))
+  ticket-id)
+
+(defun asm/--ticket-num-names-list(space-id)
+  (setq nn-list `())
+  (asm/get (format "spaces/%s/tickets" space-id) "json" (lambda(response)
+							  (lexical-let* ((tickets (json-read-from-string response))
+									 (len     (length tickets)))
+							      (dotimes (n len)
+								(let* ((ticket (elt tickets n))
+								       (num    (cdr (assoc 'number ticket)))
+								       (name   (cdr (assoc 'summary ticket)))
+								       (str    (format "%d/%s" num name)))
+								  (add-to-list 'nn-list str))))))
+  nn-list)
 
 (defun asm/goto-thing-at-point()
   "This calls an action to the `assembla-thing-at-point'.
@@ -210,7 +280,9 @@
 	    (message "No space at point.")
 	  (with-assembla-buffer "*assembla*" (format "Tickets in %s" (cdr (assoc 'name space)))
 	    (asm/get (format "spaces/%s/tickets" (cdr (assoc 'id space))) "json" 'asm/render-tickets-list)
-	    (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))))
+	    (put-text-property (point-min) (point-max) 'space-meta  (cdr (assoc 'id space)))
+	    (put-text-property (point-min) (point-max) 'prev-buffer 'assembla)
+	    (put-text-property (point-min) (point-max) 'things-in-buffer "tickets"))))
     (asm/get (format "spaces/%s/tickets" space-id) "json" 'asm/render-tickets-list)))
 
 (defun asm/render-tickets-list(json-str)
@@ -219,8 +291,10 @@
 	   (space-id (cdr (assoc 'space_id (cdr (elt tickets 0))))))
       (with-assembla-buffer "*assembla*" (format "-- %s (Tickets List)" (asm/get-space space-id 'name))
 	(dotimes (n len)
-	  (asm/render-ticket-line (elt tickets n)))))
-    (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))
+	  (asm/render-ticket-line (elt tickets n)))
+	(put-text-property (point-min) (point-max) 'things-in-buffer "tickets")
+	(put-text-property (point-min) (point-max) 'space space-id))
+    (put-text-property (point-min) (point-max) 'prev-buffer 'assembla))) ;; not beingused?
 
 ;; excerpt summary length @todo
 (defun asm/render-ticket-line(ticket)
@@ -350,9 +424,20 @@
 	    (asm/ido-assign-to))))))
 
 (defun asm/ido-status(&optional default)
+  "Presents an `ido' prompt with the possible statuses the ticket
+   can be set to. Once chosen, it changes the status, and re-renders
+   the ticket.
+
+   TODO: Needs to invalidate URI cache for re-rendering the ticket."
   (interactive)
-  (let ((statuses '("Test" "Fixed" "New" "Accepted" "Invalid")))
-    (ido-completing-read "Status: " statuses)))
+  (let* ((statuses '("Test" "Fixed" "New" "Accepted" "Invalid"))
+	 (new-status (ido-completing-read "Status: " statuses))
+	 (ticket    (get-text-property (point-min) 'ticket-meta (get-buffer "*assembla*")))
+	 (number    (cdr (assoc 'number ticket)))
+	 (space-id  (cdr (assoc 'space_id ticket)))
+	 (put-data   (json-encode-list `((ticket . ((status . ,new-status)))))))
+    (asl/post-or-put (format "spaces/%s/tickets/%d" space-id number) "json" put-data "PUT" (lambda(resp)
+											     (asm/render-ticket space-id (cdr (assoc 'id ticket)))))))
 
 (defun asm/ido-assign-to()
   "Presents an `ido' prompt with all users the ticket in *assembla* can
@@ -367,9 +452,6 @@
 
 (defun asm/--name-from-user(user)
   (cdr (assoc 'name user)))
-
-
-
 
 (defun asm/popup-comment()
   "Creates a buffer named `asm/comment-buffer-name' and pops to it.
@@ -389,10 +471,8 @@
 		 (space-id  (cdr (assoc 'space_id ticket)))
 		 (number    (cdr (assoc 'number ticket)))
 		 (comment   (buffer-string))
-		 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment)
-								   (status  . ,(asm/ido-status)))))))
+		 (post-list (json-encode-list `((ticket_comment . ((comment . ,comment))))))
 		 (uri       (format "spaces/%s/tickets/%d/ticket_comments" space-id number)))
-    (insert post-list)
     (asl/post-or-put uri "json" post-list "POST" (lambda(response)
 							(asl/invalidate-uri-cache uri "json")
 							(kill-buffer (get-buffer asm/comment-buffer-name))
