@@ -26,7 +26,7 @@ which will show a list of all tickets in that space. You can continue the trend 
 
 Pressing `C-c d` will call `asm/prev-buffer` which will bring you back to the last buffer you were viewing.
 
-When viewing a single ticket, pressing `C-c C` will open a new empty buffer for a ticket comment, after filling out
+When viewing a single ticket, pressing `C-c c` will open a new empty buffer for a ticket comment, after filling out
 the buffer with your comment, and pressing `C-c C-c` - your comment will be POSTed to Assembla and your buffer
 should refresh showing you the new comment.
 
