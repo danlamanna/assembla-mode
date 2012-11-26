@@ -8,14 +8,15 @@ Installation
 ----
 **Note: assembla-mode has a strict dependency on assembla-lib, as such, it's a submodule.**
 
-1) `git clone https://github.com/asdasDan/assembla-mode.git`
-2) `git submodule init`
-3) `git submodule update`
-4) Configure assembla-lib if not already done, by following instructions [there][1].
+1) `git clone https://github.com/asdasDan/assembla-mode.git`    
+2) `git submodule init`    
+3) `git submodule update`    
+4) Configure assembla-lib if not already done, by following instructions [there][1].    
 
 Usage
 ----
 This isn't nearly as fast as desired without caching, so enabling `asl/cache-enabled` in `M-x customize` should take care of that.
+    
 **Note: First load may be considerably slow while caching all spaces/users. Without caching, if you're a part of many
 spaces with many users, this may not be performant enough to work with.**
 
