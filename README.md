@@ -21,12 +21,12 @@ This isn't nearly as fast as desired without caching, so enabling `asl/cache-ena
 spaces with many users, this may not be performant enough to work with.**
 
     M-x assembla
-From here you should see a list of the spaces you're involved with, hitting `f` will call `asm/goto-thing-at-point`
-which will show a list of all tickets in that space. You can continue the trend of `f` to view the tickets at a higher level of detail.
+From here you should see a list of the spaces you're involved with, hitting `C-c f` will call `asm/goto-thing-at-point`
+which will show a list of all tickets in that space. You can continue the trend of `C-c f` to view the tickets at a higher level of detail.
 
-Pressing `d` will call `asm/prev-buffer` which will bring you back to the last buffer you were viewing.
+Pressing `C-c d` will call `asm/prev-buffer` which will bring you back to the last buffer you were viewing.
 
-When viewing a single ticket, pressing `C` will open a new empty buffer for a ticket comment, after filling out
+When viewing a single ticket, pressing `C-c C` will open a new empty buffer for a ticket comment, after filling out
 the buffer with your comment, and pressing `C-c C-c` - your comment will be POSTed to Assembla and your buffer
 should refresh showing you the new comment.
 
