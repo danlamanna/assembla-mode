@@ -8,7 +8,7 @@ Installation
 ----
 **Note: assembla-mode has a strict dependency on assembla-lib, as such, it's a submodule.**
 
-1) `git clone https://github.com/asdasDan/assembla-mode.git`    
+1) `git clone https://github.com/danlamanna/assembla-mode.git`    
 2) `git submodule init`    
 3) `git submodule update`    
 4) Configure assembla-lib if not already done, by following instructions [there][1].    
