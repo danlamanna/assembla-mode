@@ -38,4 +38,4 @@ If you're looking for work, see the "Todo" section in the top block of comments,
 code for TODOs in function blocks.
 
 
-[1]: https://github.com/asdasDan/assembla-lib
+[1]: https://github.com/danlamanna/assembla-lib
